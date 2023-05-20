@@ -1,0 +1,7 @@
+.idea/
+venv/
+tmp/
+logs/
+__pycache__/
+
+config-bot-email.yml
