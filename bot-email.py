@@ -359,6 +359,7 @@ async def parse_inbox(user: dict, user_request=False):
                 continue
             if p is None:
                 print(f'{datetime.utcnow().isoformat(sep="T")}: не удалось получить содержимое письма {subject}')
+                continue
             if content_type == 'text/plain':
                 body = body_decode(chs, p)
                 body_text += body
