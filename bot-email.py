@@ -15,6 +15,8 @@ from aiogram.types import MediaGroup, InputFile, ParseMode, BotCommand
 from aiogram.utils.exceptions import RetryAfter, CantParseEntities, BadRequest
 from email.header import decode_header
 
+MAX_MESSAGE = 4096
+
 
 # Специальная обёртка для исключения, чтоб завершить все асинхронные задачи.
 class ErrorThatShouldCancelOtherTasks(Exception):
@@ -26,11 +28,11 @@ async def __send_message(bot: Bot, chat_id: int, text: str, mk=None) -> int:
     result = 0
     try:
         try:
-            text = truncate(text, 1024, ellipsis=' ...')
+            text = truncate(text, MAX_MESSAGE, ellipsis=' ...')
         except UnbalancedError:
-            text = text[:1024] + ' ...'
+            text = text[:MAX_MESSAGE] + ' ...'
         except IndexError:
-            text = text[:1024] + ' ...'
+            text = text[:MAX_MESSAGE] + ' ...'
         text = tokenizer_html5lib(text)
         message_resp = await bot.send_message(
             chat_id=chat_id,
