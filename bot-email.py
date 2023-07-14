@@ -1,3 +1,5 @@
+import os
+
 from utils.htmltruncate import *
 from utils.helpers import *
 
@@ -25,6 +27,8 @@ class ErrorThatShouldCancelOtherTasks(Exception):
 
 # Отправка сообщения ботом (вспомогательная функция).
 async def __send_message(bot: Bot, chat_id: int, text: str, mk=None) -> int:
+    if bot is None:
+        return 0
     result = 0
     try:
         try:
@@ -77,6 +81,8 @@ async def __send_message(bot: Bot, chat_id: int, text: str, mk=None) -> int:
 
 # Отправка файлов (вспомогательная функция).
 async def __send_files(bot: Bot, chat_id: int, reply_message_id: int, files: list) -> bool:
+    if bot is None:
+        return True
     result = False
     split_files = split_list_by(files, 10)
     cnt_split_files = 0
@@ -112,6 +118,8 @@ async def __send_files(bot: Bot, chat_id: int, reply_message_id: int, files: lis
 
 # Отправка текстового сообщения.
 async def send_message(bot: Bot, chat_id: int, text: str, mk=None):
+    if bot is None:
+        return
     send_counter = 3
     message_id = await __send_message(bot=bot, chat_id=chat_id, text=text, mk=mk)
     while message_id == 0:
@@ -130,6 +138,8 @@ async def send_message(bot: Bot, chat_id: int, text: str, mk=None):
 
 # Отправка одного фото.
 async def send_photo(bot: Bot, chat_id: int, photo: dict, caption: str, mk=None) -> bool:
+    if bot is None:
+        return True
     result = False
     _content = photo.get('content')
     _bytes_file = io.BytesIO(_content)
@@ -154,6 +164,8 @@ async def send_photo(bot: Bot, chat_id: int, photo: dict, caption: str, mk=None)
 
 # Отправка вложений.
 async def send_attach(bot: Bot, chat_id: int, text: str, files: list):
+    if bot is None:
+        return
     send_counter = 3
     message_id = await send_message(bot=bot, chat_id=chat_id, text=text)
     while message_id == 0:
@@ -190,10 +202,17 @@ async def parse_inbox(user: dict, user_request=False):
     imap_inbox = user.get('inbox')
     imap_archive = user.get('archive', '')
     imap_read_only = user.get('read_only', True)
+    filter_from = user.get('filter_from', '')
+    filter_from_domain = user.get('filter_from_domain', '')
+    filter_ext = user.get('filter_ext', '')
 
     search_filter = 'ALL'
     if imap_read_only:
         search_filter = '(UNSEEN)'
+    if filter_from != '':
+        search_filter += f' FROM {filter_from}'
+    if filter_from_domain != '':
+        search_filter += f' HEADER FROM {filter_from_domain}'
     store_filter = '(\Deleted)'
     if imap_read_only:
         store_filter = '\Seen'
@@ -338,10 +357,23 @@ async def parse_inbox(user: dict, user_request=False):
                 p = email_message.get_payload(decode=True).strip()
             except AttributeError:
                 continue
-            body = body_decode(chs, p)
+            if p is None:
+                print(f'{datetime.utcnow().isoformat(sep="T")}: не удалось получить содержимое письма {subject}')
             if content_type == 'text/plain':
+                body = body_decode(chs, p)
                 body_text += body
+            elif content_type == 'application/octet-stream':
+                fn = email_message.get_filename()
+                if fn is not None:
+                    d_fn = email.header.decode_header(fn)
+                    fn = str(email.header.make_header(d_fn))
+                attach.append({
+                    'name': fn,
+                    'content': p,
+                    'content_type': 'application/octet-stream',
+                })
             else:
+                body = body_decode(chs, p)
                 body = sanitize_html(body)
                 body_html += body
         if body_html != '':
@@ -389,6 +421,32 @@ async def parse_inbox(user: dict, user_request=False):
         await asyncio.sleep(3)
 
         imap.expunge()
+        save_to = user.get('attaches_save_to')
+        if save_to is None or save_to == '':
+            for a in attach:
+                aname = a.get('name')
+                if 'content_body' in aname:
+                    continue
+                if filter_ext != '':
+                    if not aname.endswith(filter_ext):
+                        continue
+        else:
+            if not os.path.exists(save_to):
+                try:
+                    os.makedirs(save_to, 0o755)
+                except Exception as e:
+                    raise e
+            for a in attach:
+                aname = a.get('name')
+                acontent = a.get('content')
+                if 'content_body' in aname:
+                    continue
+                if filter_ext != '':
+                    if not aname.endswith(filter_ext):
+                        continue
+                fp = os.path.join(save_to, aname)
+                with open(fp, 'wb') as aw:
+                    aw.write(acontent)
     imap.close()  # Закроем сессию imap.
     imap.logout()  # Отключимся от почтового сервера.
 
@@ -492,8 +550,10 @@ if __name__ == '__main__':
     except FileNotFoundError:
         sys.exit(f'Укажите файл конфигурации {CFG_PATH}')
 
-    bot = Bot(token=CFG.get('bot'))
+    bot = None
     disp = None
+    if CFG.get('bot', '') != '':
+        bot = Bot(token=CFG.get('bot'))
 
     cfg_imap = CFG.get('imap')
     if cfg_imap is None:
@@ -511,7 +571,11 @@ if __name__ == '__main__':
         'read_only': cfg_imap.get('read_only', True),
         'host': cfg_imap.get('host'),
         'port': cfg_imap.get('port'),
+        'filter_from': cfg_imap.get('filter_from'),
+        'filter_from_domain': cfg_imap.get('filter_from_domain'),
         'telegram_id': CFG.get('my_telegram_id'),
+        'filter_ext': CFG.get('filter_ext'),
+        'attaches_save_to': CFG.get('attaches_save_to'),
     }
 
     try:
