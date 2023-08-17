@@ -298,7 +298,11 @@ async def parse_inbox(user: dict, user_request=False):
                 _err = f'{datetime.utcnow().isoformat(sep="T")}: Ошибка при раскодировке темы {e}'
                 print(_err)
 
-        # Форматируем в MD: дата - моноширинный, тема - полужирный.
+        # Форматируем в MD: дата - моноширинный, тема - полужирный. 'Sat, 15 Jul 2023 04:55:05 +0400'
+        try:
+            mail_date = datetime.strptime(date, '%a, %d %b %Y %H:%M:%S %z')
+        except:
+            mail_date = datetime.utcnow()
         text += '<b>' + subject + '</b>' + '\n' + '<code>' + date + '</code>' + '\n' + 'От <b>' + header_from + '</b>' + '\n' + '_' + '\n'
         attach = list()
 
@@ -432,9 +436,14 @@ async def parse_inbox(user: dict, user_request=False):
                     if not aname.endswith(filter_ext):
                         continue
         else:
-            if not os.path.exists(save_to):
+            save_to_full = os.path.join(save_to,
+                                        mail_date.strftime('%Y'),
+                                        mail_date.strftime('%m'),
+                                        mail_date.strftime('%d'),
+                                        )
+            if not os.path.exists(save_to_full):
                 try:
-                    os.makedirs(save_to, 0o755)
+                    os.makedirs(save_to_full, 0o755)
                 except Exception as e:
                     raise e
             for a in attach:
@@ -445,7 +454,7 @@ async def parse_inbox(user: dict, user_request=False):
                 if filter_ext != '':
                     if not aname.endswith(filter_ext):
                         continue
-                fp = os.path.join(save_to, aname)
+                fp = os.path.join(save_to_full, aname)
                 with open(fp, 'wb') as aw:
                     aw.write(acontent)
     imap.close()  # Закроем сессию imap.
