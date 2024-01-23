@@ -298,11 +298,13 @@ async def parse_inbox(user: dict, user_request=False):
                 _err = f'{datetime.utcnow().isoformat(sep="T")}: Ошибка при раскодировке темы {e}'
                 print(_err)
 
-        # Форматируем в MD: дата - моноширинный, тема - полужирный. 'Sat, 15 Jul 2023 04:55:05 +0400'
+        # Попытка получить дату письма.
         try:
             mail_date = datetime.strptime(date, '%a, %d %b %Y %H:%M:%S %z')
         except:
             mail_date = datetime.utcnow()
+
+        # Форматируем в MD: дата - моноширинный, тема - полужирный. 'Sat, 15 Jul 2023 04:55:05 +0400'
         text += '<b>' + subject + '</b>' + '\n' + '<code>' + date + '</code>' + '\n' + 'От <b>' + header_from + '</b>' + '\n' + '_' + '\n'
         attach = list()
 
