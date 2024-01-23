@@ -17,6 +17,8 @@ from aiogram.types import MediaGroup, InputFile, ParseMode, BotCommand
 from aiogram.utils.exceptions import RetryAfter, CantParseEntities, BadRequest
 from email.header import decode_header
 
+from utils.imap import read
+
 MAX_MESSAGE = 4096
 
 
@@ -195,272 +197,97 @@ async def send_attach(bot: Bot, chat_id: int, text: str, files: list):
 async def parse_inbox(user: dict, user_request=False):
     b = user.get('bot')
     tid = int(user.get('telegram_id'))
-    imap_login = user.get('login')
-    imap_password = user.get('password')
-    imap_host = user.get('host')
-    imap_port = user.get('port')
-    imap_inbox = user.get('inbox')
-    imap_archive = user.get('archive', '')
-    imap_read_only = user.get('read_only', True)
-    filter_from = user.get('filter_from', '')
-    filter_from_domain = user.get('filter_from_domain', '')
+
     filter_ext = user.get('filter_ext', '')
 
-    search_filter = 'ALL'
-    if imap_read_only:
-        search_filter = '(UNSEEN)'
-    if filter_from != '':
-        search_filter += f' FROM {filter_from}'
-    if filter_from_domain != '':
-        search_filter += f' HEADER FROM {filter_from_domain}'
-    store_filter = '(\Deleted)'
-    if imap_read_only:
-        store_filter = '\Seen'
+    counter = 0
 
     try:
-        imap = imaplib.IMAP4_SSL(imap_host, imap_port)
-    except Exception as e:
-        raise Exception(f'{datetime.utcnow().isoformat(sep="T")}: imaplib.IMAP4_SSL() {e} {type(e)}')
+        for eml in read(user):
+            counter += 1
+            subject = eml.get('subject', '')
+            mail_date = eml.get('date', '')
+            header_from = eml.get('header_from', '')
+            attach = eml.get('attachments', [])
 
-    try:
-        imap.login(imap_login, imap_password)
-    except Exception as e:
-        raise Exception(f'{datetime.utcnow().isoformat(sep="T")}: imap.login(imap_login, imap_password) {e} {type(e)}')
+            # Форматируем в MD: дата - моноширинный, тема - полужирный. 'Sat, 15 Jul 2023 04:55:05 +0400'
+            text = '<b>' + subject + '</b>' + '\n' + '<code>' + mail_date.strftime(
+                '%a, %d %b %Y %H:%M:%S %z') + '</code>' + '\n' + 'От <b>' + header_from + '</b>' + '\n' + '_' + '\n'
+            text += eml.get('body', '')
+            text += '\n'
 
-    try:
-        imap.select(f'"{imap_inbox}"')
-    except Exception as e:
-        imap.close()  # Закроем сессию imap.
-        imap.logout()  # Отключимся от почтового сервера.
-        raise Exception(f'{datetime.utcnow().isoformat(sep="T")}: imap.select() {e} {type(e)}')
+            # Флаг, указывающий, что во вложении только картинки, чтоб собрать медиагруппу и отправить в телеграмм
+            # не как файлы, а как изображения.
+            attach_is_image_only = True
+            for a in attach:
+                if not a.get('content_type').startswith('image'):
+                    attach_is_image_only = False
+                    break
 
-    try:
-        result, mails_to = imap.uid('search', search_filter)
-    except Exception as e:
-        imap.close()  # Закроем сессию imap.
-        imap.logout()  # Отключимся от почтового сервера.
-        raise Exception(f'{datetime.utcnow().isoformat(sep="T")}: imap.uid() {e} {type(e)}')
-
-    email_uuids = []
-    if mails_to[0] is not None:
-        email_uuids += mails_to[0].split()
-
-    if len(email_uuids) == 0:
-        if user_request:
-            await send_message(bot=b, chat_id=tid, text='ящик пустой')
-        return
-
-    for email_uid in email_uuids:
-        text = ''  # Хранилище текста сообщения.
-        try:
-            result, mail_data = imap.uid('fetch', email_uid, '(RFC822)')
-        except Exception as e:
-            _err = f'{datetime.utcnow().isoformat(sep="T")}: {e}'
-            print(_err)
-            await send_message(bot=b, chat_id=tid, text=_err)
-            continue
-        if mail_data[0] is None:
-            continue
-        raw_email = mail_data[0][1]
-        try:
-            raw_email_string = raw_email.decode('utf-8', errors="ignore")
-        except Exception as e:
-            _err = f'{datetime.utcnow().isoformat(sep="T")}: Ошибка при раскодировке письма {e}'
-            print(_err)
-            await send_message(bot=b, chat_id=tid, text=_err)
-            continue
-
-        email_message = email.message_from_string(raw_email_string)
-
-        email_re = re.compile(EMAIL_VALID_PATTERN)
-        header_from = ''
-        email_header_from = str(email_message['From'])
-        if email_re.findall(email_header_from):
-            header_from = str(email_re.findall(email_header_from)[0]).lower()
-
-        date = email_message['Date']
-
-        # =?utf-8?B?0JLRiyDRg9GB0L/QtdGI0L3QviDRgdC80LXQvdC40LvQuCDQv9Cw0YDQvg==?=
-        #  =?utf-8?B?0LvRjCDRg9GH0ZHRgtC90L7QuSDQt9Cw0L/QuNGB0Lgg0L3QsCBGaXJzdFY=?=
-        #  =?utf-8?B?RFM=?=
-
-        # '=?utf-8?B?RndkOiDQn9GA0L7QstC10YDQutCw?='
-        subject = 'Без темы'
-        _raw_subject = email_message['Subject']
-        if _raw_subject is not None:
-            try:
-                _bin_subject, _enc_subject = decode_header(_raw_subject)[0]
-                if _enc_subject is not None:
-                    subject = _bin_subject.decode(_enc_subject)
-                else:
-                    subject = str(_bin_subject)
-            except Exception as e:
-                _err = f'{datetime.utcnow().isoformat(sep="T")}: Ошибка при раскодировке темы {e}'
-                print(_err)
-
-        # Попытка получить дату письма.
-        try:
-            mail_date = datetime.strptime(date, '%a, %d %b %Y %H:%M:%S %z')
-        except:
-            mail_date = datetime.utcnow()
-
-        # Форматируем в MD: дата - моноширинный, тема - полужирный. 'Sat, 15 Jul 2023 04:55:05 +0400'
-        text += '<b>' + subject + '</b>' + '\n' + '<code>' + date + '</code>' + '\n' + 'От <b>' + header_from + '</b>' + '\n' + '_' + '\n'
-        attach = list()
-
-        body_text = ''
-        body_html = ''
-        if email_message.is_multipart():
-            for payload in email_message.walk():
-                content_type = payload.get_content_type()
-                if content_type.startswith('application') \
-                        or content_type.startswith('image'):
-                    # Получим имя файла, как оно называется в почте.
-                    fn = payload.get_filename()
-                    if fn is None:
-                        continue
-                    d_fn = email.header.decode_header(fn)
-                    fn = str(email.header.make_header(d_fn))
-                    if not (fn):
-                        # Ну, куда без имени файла, пропускаем.
-                        continue
-                    _content = payload.get_payload(decode=True)
-                    if _content is not None and len(_content) != 0:
-                        attach.append({
-                            'name': fn,
-                            'content': _content,
-                            'content_type': content_type,
-                        })
-                else:
-                    try:
-                        chs = payload.get_content_charset()
-                        p = payload.get_payload(decode=True).strip()
-                    except AttributeError:
-                        continue
-                    body = body_decode(chs, p)
-                    fn = payload.get_filename()
-                    if fn is not None:
-                        d_fn = email.header.decode_header(fn)
-                        fn = str(email.header.make_header(d_fn))
-                    if fn is not None:
-                        _content = payload.get_payload(decode=True)
-                        if _content is not None and len(_content) != 0:
-                            attach.append({
-                                'name': fn,
-                                'content': _content,
-                                'content_type': content_type,
-                            })
-                    else:
-                        if content_type == 'text/plain':
-                            body_text += body
-                        else:
-                            body = sanitize_html(body)
-                            body_html += body
-        else:
-            content_type = email_message.get_content_type()
-            try:
-                chs = email_message.get_content_charset()
-                p = email_message.get_payload(decode=True).strip()
-            except AttributeError:
-                continue
-            if p is None:
-                print(f'{datetime.utcnow().isoformat(sep="T")}: не удалось получить содержимое письма {subject}')
-                continue
-            if content_type == 'text/plain':
-                body = body_decode(chs, p)
-                body_text += body
-            elif content_type == 'application/octet-stream':
-                fn = email_message.get_filename()
-                if fn is not None:
-                    d_fn = email.header.decode_header(fn)
-                    fn = str(email.header.make_header(d_fn))
-                attach.append({
-                    'name': fn,
-                    'content': p,
-                    'content_type': 'application/octet-stream',
-                })
+            if len(attach) == 0:
+                if text != '':
+                    # Если удалось собрать текст для сообщения, то разошлём его по получателям.
+                    await send_message(bot=b, chat_id=tid, text=text)
+            elif len(attach) == 1 and attach_is_image_only:
+                await send_photo(bot=b, chat_id=tid, photo=attach[0], caption=text)
             else:
-                body = body_decode(chs, p)
-                body = sanitize_html(body)
-                body_html += body
-        if body_html != '':
-            text += body_html
-            text += '\n'
-            _content = body_html.encode()
-            if _content is not None and len(_content) != 0:
-                attach.append({
-                    'name': 'content_body.html',
-                    'content': _content,
-                    'content_type': 'text/html',
-                })
-        else:
-            text += body_text
-            _content = body_text.encode()
-            if _content is not None and len(_content) != 0:
-                attach.append({
-                    'name': 'content_body.txt',
-                    'content': _content,
-                    'content_type': 'text/plain',
-                })
-            text += '\n'
+                await send_attach(bot=b, chat_id=tid, text=text, files=attach)
 
-        # Флаг, указывающий, что во вложении только картинки, чтоб собрать медиагруппу и отправить в телеграмм
-        # не как файлы, а как изображения.
-        attach_is_image_only = True
-        for a in attach:
-            if not a.get('content_type').startswith('image'):
-                attach_is_image_only = False
-                break
-
-        if len(attach) == 0:
-            if text != '':
-                # Если удалось собрать текст для сообщения, то разошлём его по получателям.
-                await send_message(bot=b, chat_id=tid, text=text)
-        elif len(attach) == 1 and attach_is_image_only:
-            await send_photo(bot=b, chat_id=tid, photo=attach[0], caption=text)
-        else:
-            await send_attach(bot=b, chat_id=tid, text=text, files=attach)
-
-        if imap_archive != '':
-            imap.uid('COPY', email_uid, imap_archive)
-
-        imap.uid('STORE', email_uid, '+FLAGS', store_filter)
-        await asyncio.sleep(3)
-
-        imap.expunge()
-        save_to = user.get('attaches_save_to')
-        if save_to is None or save_to == '':
-            for a in attach:
-                aname = a.get('name')
-                if 'content_body' in aname:
-                    continue
-                if filter_ext != '':
-                    if not aname.endswith(filter_ext):
+            save_to = user.get('attaches_save_to')
+            if save_to is None or save_to == '':
+                for a in attach:
+                    aname = a.get('name')
+                    if 'content_body' in aname:
                         continue
-        else:
-            save_to_full = os.path.join(save_to,
-                                        mail_date.strftime('%Y'),
-                                        mail_date.strftime('%m'),
-                                        mail_date.strftime('%d'),
-                                        )
-            if not os.path.exists(save_to_full):
-                try:
-                    os.makedirs(save_to_full, 0o755)
-                except Exception as e:
-                    raise e
-            for a in attach:
-                aname = a.get('name')
-                acontent = a.get('content')
-                if 'content_body' in aname:
-                    continue
-                if filter_ext != '':
-                    if not aname.endswith(filter_ext):
+                    if filter_ext != '':
+                        if not aname.endswith(filter_ext):
+                            continue
+            else:
+                save_to_full = os.path.join(save_to,
+                                            mail_date.strftime('%Y'),
+                                            mail_date.strftime('%m'),
+                                            mail_date.strftime('%d'),
+                                            )
+                if not os.path.exists(save_to_full):
+                    try:
+                        os.makedirs(save_to_full, 0o755)
+                    except Exception as e:
+                        raise e
+                for a in attach:
+                    aname = a.get('name')
+                    acontent = a.get('content')
+                    if 'content_body' in aname:
                         continue
-                fp = os.path.join(save_to_full, aname)
-                with open(fp, 'wb') as aw:
-                    aw.write(acontent)
-    imap.close()  # Закроем сессию imap.
-    imap.logout()  # Отключимся от почтового сервера.
+                    if filter_ext != '':
+                        if not aname.endswith(filter_ext):
+                            continue
+                    fp = os.path.join(save_to_full, aname)
+                    with open(fp, 'wb') as aw:
+                        aw.write(acontent)
+
+            backup_to = user.get('backup_save_to', '')
+            if backup_to != '':
+                save_to_full = os.path.join(backup_to,
+                                            mail_date.strftime('%Y'),
+                                            mail_date.strftime('%m'),
+                                            mail_date.strftime('%d'),
+                                            )
+                if not os.path.exists(save_to_full):
+                    try:
+                        os.makedirs(save_to_full, 0o755)
+                    except Exception as e:
+                        raise e
+
+                emlname = f'{counter}_{eml.get("from")}_{eml.get("subject")[:10]}.eml'
+                fp = os.path.join(save_to_full, emlname)
+                with open(fp, 'w') as aw:
+                    aw.write(eml.get("raw"))
+
+    except Exception as e:
+        raise Exception(e)
+
+    if counter == 0 and user_request:
+        await send_message(bot=b, chat_id=tid, text='ящик пустой')
 
 
 async def bot_command_handler(d: Dispatcher, user: dict):
@@ -510,7 +337,8 @@ async def cmd_read_handler(message: types.Message):
 
 
 async def cmd_me_handler(message: types.Message):
-    await message.answer(f'Мой TelegramID: `{message.from_user.id}`\nTelegramID чата: `{message.chat.id}`', parse_mode=types.ParseMode.MARKDOWN_V2)
+    await message.answer(f'Мой TelegramID: `{message.from_user.id}`\nTelegramID чата: `{message.chat.id}`',
+                         parse_mode=types.ParseMode.MARKDOWN_V2)
 
 
 # Регистрация команд, отображаемых в интерфейсе Telegram
@@ -552,7 +380,6 @@ async def main(user_data: dict, d: Dispatcher = None, cycle=False):
 
 # Константы.
 CFG_PATH = 'config-bot-email.yml'
-EMAIL_VALID_PATTERN = r'([a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)'
 
 # Начало выполнения.
 if __name__ == '__main__':
@@ -579,7 +406,7 @@ if __name__ == '__main__':
         'login': cfg_imap.get('login'),
         'password': cfg_imap.get('password'),
         'inbox': cfg_imap.get('inbox'),
-        'archive': cfg_imap.get('archive'),
+        'archive': cfg_imap.get('archive', ''),
         'read_only': cfg_imap.get('read_only', True),
         'host': cfg_imap.get('host'),
         'port': cfg_imap.get('port'),
@@ -588,6 +415,7 @@ if __name__ == '__main__':
         'telegram_id': CFG.get('my_telegram_id'),
         'filter_ext': CFG.get('filter_ext'),
         'attaches_save_to': CFG.get('attaches_save_to'),
+        'backup_save_to': CFG.get('backup_save_to'),
     }
 
     try:

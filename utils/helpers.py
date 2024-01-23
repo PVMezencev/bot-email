@@ -6,6 +6,7 @@ import html5lib
 
 from markdownify import markdownify as md
 
+EMAIL_VALID_PATTERN = r'([a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)'
 
 def split_list_by(big_list: list, limit: int) -> list:
     """

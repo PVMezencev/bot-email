@@ -1,6 +1,7 @@
 .idea/
 venv/
 tmp/
+backup/
 logs/
 __pycache__/
 
