@@ -45,7 +45,7 @@ def read(conf: dict) -> list:
         raise Exception(f'{datetime.utcnow().isoformat(sep="T")}: imap.login(imap_login, imap_password) {e} {type(e)}')
 
     # Список папок.
-    # print(imap.list())
+    print(imap.list())
     try:
         imap.select(f'"{imap_inbox}"')
     except Exception as e:
@@ -140,9 +140,14 @@ def read(conf: dict) -> list:
 
         # Попытка получить дату письма.
         try:
+            # Date: Sat, 9 Sep 2023 01:15:44 +0000
             mail_date = datetime.strptime(date, '%a, %d %b %Y %H:%M:%S %z')
         except:
-            mail_date = datetime.utcnow()
+            try:
+                # Date: Wed, 09 Feb 2022 05:27:06 GMT
+                mail_date = datetime.strptime(date, '%a, %d %b %Y %H:%M:%S %Z')
+            except:
+                mail_date = datetime.utcnow()
 
         attach = list()
 
@@ -250,7 +255,7 @@ def read(conf: dict) -> list:
         imap.expunge()
 
         # Пауза.
-        time.sleep(3)
+        time.sleep(0.3)
 
         eml = {
             'subject': subject,

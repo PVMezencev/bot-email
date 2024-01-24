@@ -278,7 +278,7 @@ async def parse_inbox(user: dict, user_request=False):
                     except Exception as e:
                         raise e
 
-                emlname = f'{counter}_{eml.get("from")}_{eml.get("subject")[:10]}.eml'
+                emlname = f'{counter}_{eml.get("from")}_{eml.get("subject")[:10].replace(" ", "_")}.eml'
                 fp = os.path.join(save_to_full, emlname)
                 with open(fp, 'w') as aw:
                     aw.write(eml.get("raw"))

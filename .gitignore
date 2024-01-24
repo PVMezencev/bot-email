@@ -2,6 +2,8 @@
 venv/
 tmp/
 backup/
+backup_jivosite/
+backup_parking/
 logs/
 __pycache__/
 
