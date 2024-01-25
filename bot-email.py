@@ -1,3 +1,4 @@
+import argparse
 import os
 
 from utils.htmltruncate import *
@@ -278,7 +279,8 @@ async def parse_inbox(user: dict, user_request=False):
                     except Exception as e:
                         raise e
 
-                emlname = f'{counter}_{eml.get("from")}_{eml.get("subject")[:10].replace(" ", "_")}.eml'
+                subj_prepare = eml.get("subject")[:10].replace(" ", "_").replace(":", "_").replace("/", "_").replace("\\", "_")
+                emlname = f'{counter}_{eml.get("from")}_{subj_prepare}.eml'
                 fp = os.path.join(save_to_full, emlname)
                 with open(fp, 'w') as aw:
                     aw.write(eml.get("raw"))
@@ -378,11 +380,14 @@ async def main(user_data: dict, d: Dispatcher = None, cycle=False):
             await s.close()
 
 
-# Константы.
-CFG_PATH = 'config-bot-email.yml'
-
 # Начало выполнения.
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Обработка почты.', argument_default='')
+    parser.add_argument('--config', help='путь к файлу конфигурации', type=str, default='config-bot-email.yml')
+    params = parser.parse_args()
+
+    CFG_PATH = params.config
+
     try:
         with open(CFG_PATH, 'r') as yml_file:
             CFG = yaml.load(yml_file, Loader=yaml.FullLoader)

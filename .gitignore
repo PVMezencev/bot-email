@@ -4,7 +4,9 @@ tmp/
 backup/
 backup_jivosite/
 backup_parking/
+backup_*/
 logs/
 __pycache__/
+configs/
 
 config-bot-email.yml
